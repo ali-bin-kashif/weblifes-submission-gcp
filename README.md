@@ -13,7 +13,10 @@
 | **Data Quality Dashboard** | _https://datastudio.google.com/reporting/701860c2-5e1e-4468-8371-6b6ca5150874_ |
 | **Live Chatbot** | _https://weblifes-submission-gcp.onrender.com_ |
 
+<br>
+
 ---
+<br>
 
 ## The Problem
 
@@ -37,7 +40,10 @@ Non-technical users have no way to get answers on their own.
 
 **Your manager asks you to fix all of it. On GCP. With BigQuery as the destination.**
 
+<br>
+
 ---
+<br>
 
 ## The Solution
 
@@ -48,7 +54,10 @@ Non-technical users have no way to get answers on their own.
 | Dirty data reaching dashboards | 14 DQ checks across 3 severity levels; quarantine table for rejected rows; staging layer with dedup, type-casting, and canonicalisation |
 | No self-serve analytics | Plain-English AI chatbot backed by Claude + BigQuery — anyone can ask questions and get answers instantly |
 
+<br>
+
 ---
+<br>
 
 ## Table of Contents
 
@@ -62,10 +71,12 @@ Non-technical users have no way to get answers on their own.
 8. [Deploying the Chatbot to Render](#8-deploying-the-chatbot-to-render)
 9. [Environment Variables Reference](#9-environment-variables-reference)
 10. [Alerting System](#10-alerting-system)
-11. [What Was Built — Feature Highlights](#11-what-was-built--feature-highlights)
-12. [In a Real Production Environment](#12-in-a-real-production-environment)
+11. [In a Real Production Environment](#12-in-a-real-production-environment)
+
+<br>
 
 ---
+<br>
 
 ## 1. Architecture Overview
 
@@ -74,7 +85,10 @@ Non-technical users have no way to get answers on their own.
 ![Gmail to BigQuery Architecture](document_assets/gmail_bigquery_architecture.png)
 
 
+<br>
+
 ---
+<br>
 
 ## 2. Project Structure
 
@@ -127,7 +141,10 @@ weblifes-submission-gcp/
 └── CLAUDE.md                            # AI assistant instructions
 ```
 
+<br>
+
 ---
+<br>
 
 ## 3. Deliverable 1 — Gmail → BigQuery Ingestion Pipeline
 
@@ -208,7 +225,10 @@ Returns `False` when the table doesn't exist yet — no special-casing needed on
 | `_pipeline_run_date` | DATE | Partition key (DAY) |
 | `_email_received_date` | STRING | From email `Date` header |
 
+<br>
+
 ---
+<br>
 
 ## 4. Deliverable 2 — Data Quality Checks & Transformations
 
@@ -285,7 +305,10 @@ fct_orders  (pre-aggregated daily fact table)
 
 **Clustered by** `store_name`, `product_category` for fast BI queries.
 
+<br>
+
 ---
+<br>
 
 ## 5. Deliverable 3 — AI Insights Chatbot
 
@@ -335,7 +358,10 @@ Claude (tool-use loop, max 5 rounds)
 
 Claude uses a single tool — `query_orders` — which takes a SQL string, validates it, and returns a markdown table.
 
+<br>
+
 ---
+<br>
 
 ## 6. Local Development Setup
 
@@ -461,7 +487,10 @@ Open [http://localhost:8000](http://localhost:8000).
 
 
 
+<br>
+
 ---
+<br>
 
 ## 7. Deploying to Google Cloud
 
@@ -515,7 +544,10 @@ bq query --use_legacy_sql=false < bigquery_transformations/staging/stg_orders_cl
 bq query --use_legacy_sql=false < bigquery_transformations/mart/fct_orders.sqlx
 ```
 
+<br>
+
 ---
+<br>
 
 ## 8. Deploying the Chatbot to Render
 
@@ -565,7 +597,10 @@ gcloud run deploy weblife-chatbot \
 
 > Do **not** set `GOOGLE_CREDENTIALS_JSON` on Cloud Run — grant the service account `BigQuery Data Viewer` and `BigQuery Job User` and Workload Identity handles auth.
 
+<br>
+
 ---
+<br>
 
 ## 9. Environment Variables Reference
 
@@ -598,7 +633,10 @@ gcloud run deploy weblife-chatbot \
 
 **Credential precedence:** `GOOGLE_CREDENTIALS_JSON` → `GOOGLE_APPLICATION_CREDENTIALS` → ADC (Cloud Run).
 
+<br>
+
 ---
+<br>
 
 ## 10. Alerting System
 
@@ -639,7 +677,7 @@ The quality report email includes: row count, duplicate `order_id` count, full d
 ---
 <br>
 
-## 12. My Approach For A Real Production Environment (Without Sandbox Limits)
+## 11. My Approach For A Real Production Environment (Without Sandbox Limits)
 
 ### SLAs and Ingestion Contracts
 
