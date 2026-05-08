@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: weblife-insights-chatbot
+    runtime: docker
+    dockerfilePath: insights_chatbot/Dockerfile
+    dockerContext: insights_chatbot
+    healthCheckPath: /
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false                          # set manually in Render dashboard
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false                          # paste full service account JSON string
+      - key: BQ_PROJECT_ID
+        value: reflected-codex-468204-m7
+      - key: CLAUDE_MODEL
+        value: claude-haiku-4-5-20251001
