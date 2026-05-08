@@ -3,6 +3,8 @@
 > **Take-Home Assessment — Data & AI Engineer (GCP)**
 > End-to-end data platform: Gmail ingestion → BigQuery transformation → plain-English AI chatbot.
 
+![Weblife Labs](https://cdn.prod.website-files.com/667dec2ef09f9df602fdc0e2/6683a5a78768e98695394bda_logo-black.svg)
+
 ---
 
 ## Demo & Walkthrough
