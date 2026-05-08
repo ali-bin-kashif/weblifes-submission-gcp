@@ -1,6 +1,9 @@
 """
-BigQuery query execution for the insights chatbot.
-Read-only: only SELECT statements are allowed.
+Read-only BigQuery client for the insights chatbot.
+
+Only SELECT statements are permitted. All queries are validated before execution
+and automatically capped at _MAX_ROWS to prevent accidentally large result sets
+being passed back to the LLM.
 """
 
 import json
@@ -16,36 +19,50 @@ from utils.schema import TABLE_ID
 
 logger = logging.getLogger(__name__)
 
-_MAX_ROWS = 500  # hard cap on rows returned to the LLM
-_QUERY_TIMEOUT = 30  # seconds
+_MAX_ROWS = 500      # hard cap on rows returned to the LLM
+_QUERY_TIMEOUT = 30  # seconds before a hung query is abandoned
 
 
 class BQQueryError(Exception):
+    """Raised for validation failures or BigQuery execution errors."""
     pass
 
 
 class BigQueryClient:
     def __init__(self, config: Config):
+        """
+        Initialise the BigQuery client using the first available credential source:
+
+          1. GOOGLE_CREDENTIALS_JSON  — service account JSON pasted as a string
+                                        (used on Render and other PaaS platforms)
+          2. GOOGLE_APPLICATION_CREDENTIALS — path to a service account JSON file
+                                        (used for local development)
+          3. Neither set              — falls back to Application Default Credentials
+                                        (used on Cloud Run via Workload Identity)
+        """
         if config.GOOGLE_CREDENTIALS_JSON:
-            # Render / PaaS: full service account JSON stored as an env var string
             credentials = service_account.Credentials.from_service_account_info(
                 json.loads(config.GOOGLE_CREDENTIALS_JSON)
             )
             self._client = bigquery.Client(project=config.BQ_PROJECT_ID, credentials=credentials)
         elif config.GOOGLE_APPLICATION_CREDENTIALS:
-            # Local dev: path to service account JSON file
             credentials = service_account.Credentials.from_service_account_file(
                 config.GOOGLE_APPLICATION_CREDENTIALS
             )
             self._client = bigquery.Client(project=config.BQ_PROJECT_ID, credentials=credentials)
         else:
-            # Cloud Run / GCP: Application Default Credentials via Workload Identity
+            # No explicit credentials — BigQuery SDK picks up ADC automatically
             self._client = bigquery.Client(project=config.BQ_PROJECT_ID)
 
     def run_query(self, sql: str) -> str:
         """
-        Validates and executes a SQL query, returns results as a markdown table string.
-        Raises BQQueryError on validation failure or BigQuery errors.
+        Validate and execute a SQL query, returning results as a markdown table string.
+
+        Validation rejects anything that isn't a SELECT statement.
+        A LIMIT clause is appended if the query doesn't include one.
+
+        Raises:
+            BQQueryError: if validation fails or BigQuery returns an error.
         """
         sql = sql.strip()
         _validate_select_only(sql)
@@ -62,15 +79,22 @@ class BigQueryClient:
 
 
 # ---------------------------------------------------------------------------
-# Internals
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _validate_select_only(sql: str) -> None:
+    """
+    Reject any query that is not a plain SELECT statement.
+
+    Two-pass check:
+      1. First token must be SELECT — catches most non-SELECT statements quickly.
+      2. Regex scan for forbidden keywords — catches SELECT ... DELETE FROM subqueries
+         or other injection attempts that pass the first check.
+    """
     first_token = sql.split()[0].upper() if sql.split() else ""
     if first_token != "SELECT":
         raise BQQueryError("Only SELECT queries are allowed.")
 
-    # Block any statement that could mutate data
     forbidden = re.compile(
         r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|MERGE|CALL)\b",
         re.IGNORECASE,
@@ -80,23 +104,33 @@ def _validate_select_only(sql: str) -> None:
 
 
 def _inject_limit(sql: str) -> str:
-    """Appends LIMIT if not already present, to prevent accidentally large result sets."""
+    """
+    Append LIMIT _MAX_ROWS if the query has no LIMIT clause.
+
+    Prevents Claude from accidentally pulling the entire table into the
+    context window when it writes an open-ended aggregation query.
+    """
     if not re.search(r"\bLIMIT\b", sql, re.IGNORECASE):
         return f"{sql}\nLIMIT {_MAX_ROWS}"
     return sql
 
 
 def _format_results(df: pd.DataFrame) -> str:
+    """
+    Convert a query result DataFrame into a markdown table string for the LLM.
+
+    Shows at most 50 rows in the table (to keep context token count reasonable),
+    but reports the true total row count in a trailing note.
+    Numeric columns are rounded to 2 decimal places before formatting.
+    """
     if df.empty:
         return "Query returned no results."
 
     row_count = len(df)
 
-    # Round numeric columns to 2dp for cleaner LLM context
     for col in df.select_dtypes(include="number").columns:
         df[col] = df[col].round(2)
 
-    # Markdown table (LLM reads this well)
     table = df.head(50).to_markdown(index=False)
 
     note = f"\n\n_{row_count} row(s) returned" + (

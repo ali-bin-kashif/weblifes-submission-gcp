@@ -1,15 +1,15 @@
 """
-BigQuery table schema and tool definition for the LLM.
-Update BUSINESS_CONTEXT when the user provides domain-specific details.
+Fact table schema, business context, and tool definition for the Claude agent.
+
+BUSINESS_CONTEXT and _SCHEMA_DESCRIPTION are injected into the system prompt so
+Claude understands what the data represents and how to query it correctly.
+Update BUSINESS_CONTEXT if the store list, product range, or date range changes.
 """
 
 from datetime import date
 
 TABLE_ID = "reflected-codex-468204-m7.weblife_ecommerce.fct_orders"
 
-# ---------------------------------------------------------------------------
-# Update this when the user provides business context
-# ---------------------------------------------------------------------------
 BUSINESS_CONTEXT = """
 E-commerce company with 5 retail stores across the US.
 Sells indoor and outdoor tools and peripherals.
@@ -18,6 +18,9 @@ Operates 2022–present. Data refreshed daily via the ingestion pipeline.
 Stores: PatioWorld, OutdoorHub, NatureGoods, GardenPlus, HomeNest
 """
 
+# Full column-level description sent to the LLM as part of the system prompt.
+# Includes explicit SQL rules to steer Claude toward efficient, correct queries
+# (e.g. filter on pre-computed integer columns rather than calling EXTRACT()).
 _SCHEMA_DESCRIPTION = f"""
 Table: `{TABLE_ID}`
 
@@ -52,12 +55,23 @@ SQL RULES:
 
 
 def get_system_prompt() -> str:
+    """
+    Build the full system prompt injected at the start of every Claude request.
+
+    Includes today's date and the last complete month so Claude can resolve
+    relative time references ('last month', 'this year') correctly without
+    relying on its training data cutoff.
+    """
+    today = date.today()
     return f"""\
 You are a business intelligence assistant. Help non-technical stakeholders understand \
 sales performance in plain English — no SQL jargon, no raw tables.
 
 Use the query_orders tool to fetch data from BigQuery, then answer conversationally.
 You may run multiple queries if needed to fully answer the question.
+
+Today's date: {today.isoformat()}
+Last complete month: {_last_month()}
 
 BUSINESS CONTEXT:
 {BUSINESS_CONTEXT.strip()}
@@ -74,6 +88,8 @@ RESPONSE STYLE:
 """
 
 
+# Tool definition passed to the Anthropic API.
+# Claude uses this schema to know when and how to call query_orders.
 TOOLS = [
     {
         "name": "query_orders",
@@ -97,6 +113,7 @@ TOOLS = [
 
 
 def _last_month() -> str:
+    """Return the last complete month as 'YYYY-MM', handling January correctly."""
     today = date.today()
     month = today.month - 1 or 12
     year = today.year if today.month > 1 else today.year - 1

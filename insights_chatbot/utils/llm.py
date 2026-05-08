@@ -1,18 +1,19 @@
 """
-Agentic loop: Claude ↔ BigQuery via tool use with streaming.
+Claude ↔ BigQuery agentic loop with streaming.
 
 Flow per turn:
-  1. Open a streaming request to Claude.
-  2. Yield text_chunk events as tokens arrive (these go straight to the UI).
-  3. After the stream completes, inspect the final message for tool calls.
-  4. If tool calls present: execute SQL on BigQuery, yield sql/result events, loop.
-  5. If no tool calls (end_turn): text was already streamed — return.
+  1. Open a streaming request to Claude with the conversation history and tools.
+  2. Yield text_chunk events as tokens arrive — these go straight to the UI.
+  3. After the stream ends, inspect the final message for tool_use blocks.
+  4. If tool calls are present: execute each SQL query, yield sql/result/error
+     events, append results to the message history, and loop.
+  5. If no tool calls (end_turn): all text is already streamed — return.
 
-Event types yielded:
-  {"type": "text_chunk", "content": <token>}     — stream directly to the UI message
-  {"type": "sql",        "content": <sql>}        — Claude issued a BQ query
-  {"type": "result",     "content": <result>}     — BQ returned data
-  {"type": "error",      "content": <message>}    — BQ or validation error
+Events yielded:
+  {"type": "text_chunk", "content": <token>}   — stream directly to the UI message
+  {"type": "sql",        "content": <sql>}      — Claude issued a BigQuery query
+  {"type": "result",     "content": <result>}   — BigQuery returned data
+  {"type": "error",      "content": <message>}  — validation or execution error
 """
 
 from typing import AsyncGenerator
@@ -23,7 +24,9 @@ from utils.bq_client import BigQueryClient, BQQueryError
 from utils.config import Config
 from utils.schema import TOOLS, get_system_prompt
 
-_MAX_TOOL_ROUNDS = 5  # prevent runaway loops
+# Cap the number of tool-call rounds per user message to avoid runaway loops
+# in cases where Claude keeps issuing queries without reaching a conclusion.
+_MAX_TOOL_ROUNDS = 5
 
 
 async def run_agent(
@@ -33,11 +36,24 @@ async def run_agent(
     bq: BigQueryClient,
 ) -> AsyncGenerator[dict, None]:
     """
-    Runs the Claude ↔ BigQuery agentic loop with streaming.
-    Text tokens are yielded immediately as text_chunk events.
-    Tool call events (sql, result, error) appear between streaming turns.
+    Run the Claude ↔ BigQuery agentic loop for a single user message.
+
+    Streams text tokens to the caller as they arrive and yields structured
+    events for each SQL query and its result. The caller (app.py) maps these
+    events to Chainlit UI elements.
+
+    Args:
+        question: The user's current message.
+        history:  Prior turns as a list of {"role": ..., "content": ...} dicts.
+        config:   Runtime configuration (API keys, model, etc.).
+        bq:       Initialised BigQuery client for executing queries.
+
+    Yields:
+        Event dicts with a "type" key and a "content" key (see module docstring).
     """
     client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
+
+    # Prepend history so Claude has conversation context for follow-up questions
     messages = history + [{"role": "user", "content": question}]
 
     for _ in range(_MAX_TOOL_ROUNDS):
@@ -48,20 +64,24 @@ async def run_agent(
             tools=TOOLS,
             messages=messages,
         ) as stream:
-            # Stream text tokens as they arrive
+            # Yield tokens immediately so the UI starts rendering before the
+            # full response is available — keeps latency perception low.
             async for text in stream.text_stream:
                 yield {"type": "text_chunk", "content": text}
 
-            # After stream completes, get the full response to check for tool calls
+            # get_final_message() waits for the stream to complete and returns
+            # the full message including any tool_use blocks appended after text.
             final = await stream.get_final_message()
 
         tool_use_blocks = [b for b in final.content if b.type == "tool_use"]
 
         if not tool_use_blocks:
-            # end_turn with no tools — all text already streamed
+            # Claude reached end_turn without calling any tools — text already streamed.
             return
 
-        # Tool call turn — execute queries and feed results back
+        # Append Claude's response (including tool_use blocks) before sending results back.
+        # The API requires the assistant turn to appear in the message history before
+        # the corresponding tool_result turn.
         messages.append({"role": "assistant", "content": final.content})
         tool_results = []
 
@@ -82,6 +102,13 @@ async def run_agent(
                 "content": result,
             })
 
+        # Feed all tool results back as a single user turn so Claude can
+        # interpret them and either answer or issue another query.
         messages.append({"role": "user", "content": tool_results})
 
-    yield {"type": "text_chunk", "content": "I reached the query limit without a complete answer. Please try rephrasing your question."}
+    # Reached the round cap without a final answer — surface this to the user
+    # rather than silently returning an empty response.
+    yield {
+        "type": "text_chunk",
+        "content": "I reached the query limit without a complete answer. Please try rephrasing your question.",
+    }
