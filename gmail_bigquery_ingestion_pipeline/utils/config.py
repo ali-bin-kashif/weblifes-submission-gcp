@@ -1,9 +1,11 @@
 import os
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-load_dotenv()
+# find_dotenv() walks up from the current directory until it finds a .env file,
+# so the pipeline works whether run from its own folder or the repo root.
+load_dotenv(find_dotenv(usecwd=True))
 
 @dataclass
 class Config:
