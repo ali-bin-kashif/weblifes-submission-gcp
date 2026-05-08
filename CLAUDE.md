@@ -29,7 +29,8 @@ gmail_bigquery_ingestion_pipeline/
         gmail_reader.py  # IMAP client; returns EmailFetchResult (latest matched email)
         attachment_parser.py  # CSV bytes → pandas DataFrame (all str, no type casting)
         bq_loader.py     # BigQueryLoader: ensure_table, idempotency check, load
-        pipeline.py      # Orchestrator: fetch → idempotency check → parse → load
+        pipeline.py      # Orchestrator: fetch → idempotency check → parse → load → alert
+        alerting.py      # Gmail SMTP alerts: 5 scenarios (see Alerting section below)
         date_helpers.py  # parse_date_from_subject / parse_date_from_filename
         logging_config.py
 ```
@@ -52,7 +53,7 @@ gmail_bigquery_ingestion_pipeline/
 |---|---|---|
 | `GMAIL_HOST` | `imap.gmail.com` | |
 | `GMAIL_PORT` | `993` | |
-| `GMAIL_EMAIL` | — | Gmail address |
+| `GMAIL_EMAIL` | — | Gmail address (also used as SMTP sender) |
 | `GMAIL_APP_PASSWORD` | — | 16-char app password |
 | `GMAIL_SUBJECT_FILTER` | `[E-Com] Daily Sales Export` | IMAP substring search |
 | `GMAIL_SUBJECT_PATTERN` | `^\[E-Com\] Daily Sales Export\s*[–-]\s*\d{4}-\d{2}-\d{2}$` | Full regex |
@@ -61,11 +62,28 @@ gmail_bigquery_ingestion_pipeline/
 | `BQ_PROJECT_ID` | — | GCP project |
 | `BQ_DATASET_ID` | — | BigQuery dataset (e.g. `raw`) |
 | `BQ_RAW_TABLE` | `raw_orders` | BigQuery table name |
+| `ALERT_RECIPIENT_EMAIL` | — | Alert/report destination; leave empty to disable all alerts |
 
 ## BigQuery Raw Table Schema
 
 Source columns: `order_id`, `order_date`, `customer_id`, `customer_name`, `customer_email`, `customer_city`, `customer_state`, `product_name`, `product_category`, `quantity`, `unit_price`, `discount_amount`, `revenue`, `store_name`, `shipping_method`, `shipping_status`, `payment_method` — all `STRING`.
 
-Metadata: `_ingested_at` (TIMESTAMP), `_source_filename` (STRING), `_pipeline_run_date` (DATE, partition key), `email_received_date` (STRING).
+Metadata: `_ingested_at` (TIMESTAMP), `_source_filename` (STRING), `_pipeline_run_date` (DATE, partition key), `_email_received_date` (STRING).
 
 Table is partitioned DAY on `_pipeline_run_date`.
+
+## Alerting
+
+All alerts are sent via Gmail SMTP (port 587, STARTTLS) using `GMAIL_EMAIL` / `GMAIL_APP_PASSWORD`. Alerting is entirely disabled when `ALERT_RECIPIENT_EMAIL` is unset. Alert failures are non-fatal — logged as warnings, pipeline outcome is unaffected.
+
+| Scenario | Alert type | Where triggered |
+|---|---|---|
+| No matching email in inbox | `send_no_email_alert` | `main()` on `NoMatchingEmailError` |
+| Email found but no/empty CSV | `send_no_attachment_alert` | `run()` before raising `NoAttachmentError` |
+| File already in BigQuery | `send_already_ingested_alert` | `run()` before early return |
+| BQ / network / system error | `send_failure_alert` | `main()` on `BQLoadError` / `Exception` |
+| Successful load | `send_quality_report` (HTML) | `run()` after load completes |
+
+`NoAttachmentError` is a subclass of `AttachmentParseError`. `main()` catches it first so the no-attachment path gets only one alert (the specific one fired inside `run()`), not a second generic failure alert.
+
+The quality report email includes: row count, duplicate `order_id` count, full duplicate row count, per-column empty-value counts and percentages.

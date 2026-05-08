@@ -1,0 +1,11 @@
+-- definitions/sources/raw_orders.sqlx
+-- Declares the raw source table ingested by the Cloud Function.
+-- This is not a model — it just tells Dataform where raw data lives.
+
+config {
+  type: "declaration",
+  database: "reflected-codex-468204-m7",
+  schema: "weblife_ecommerce",
+  name: "raw_orders",
+  description: "Raw orders ingested daily by Cloud Function from GCS. All fields STRING. Append-only."
+}

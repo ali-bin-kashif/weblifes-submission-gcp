@@ -1,0 +1,91 @@
+-- definitions/mart/fct_orders.sqlx
+-- Fact table: aggregated orders at daily × store × category × product grain
+-- Powers dashboards and NL chatbot.
+
+config {
+  type: "table",
+  schema: "weblife_ecommerce",
+  name: "fct_orders",
+  description: "Daily aggregated order fact table. Grain: order_date × store_name × product_category × product_name × shipping_status. Source for all dashboards and NL chatbot queries.",
+
+  bigquery: {
+    // Sandbox: comment out partitionBy — causes empty table without billing
+    // Production: uncomment below
+    // partitionBy: "order_date",
+    clusterBy: ["store_name", "product_category"]
+    // requirePartitionFilter: false
+  },
+
+  tags: ["mart", "daily"],
+
+  columns: {
+    order_date:            "Date of orders in this aggregate row.",
+    store_name:            "Canonical store name. One of 5 stores.",
+    product_category:      "Canonical product category. One of 5 categories.",
+    product_name:          "Canonical product name. One of 20 products.",
+    shipping_status:       "Canonical shipping status.",
+    total_orders:          "COUNT DISTINCT order_id — unique orders in this group.",
+    total_units_sold:      "SUM of quantity across all orders in this group.",
+    unique_customers:      "COUNT DISTINCT customer_id in this group.",
+    total_revenue:         "SUM of revenue in USD. Rounded to 2dp.",
+    total_discounts_given: "SUM of discount_amount applied in this group.",
+    discount_rate_pct:     "total_discounts_given / total_revenue × 100.",
+    order_year:            "EXTRACT YEAR from order_date. For year filtering.",
+    order_month:           "EXTRACT MONTH from order_date. For month filtering.",
+    order_year_month:      "FORMAT YYYY-MM. For time-series grouping.",
+    order_day_of_week:     "Day name e.g. Monday. For day-of-week analysis.",
+    _last_updated:         "Date this mart was last rebuilt."
+  },
+
+  assertions: {
+    nonNull: ["order_date", "store_name", "product_category", "product_name", "total_revenue"],
+    rowConditions: [
+      "total_orders > 0",
+      "total_revenue > 0",
+      "total_units_sold > 0"
+    ]
+  }
+}
+
+
+SELECT
+  -- ── Grain dimensions ───────────────────────────────────────
+  order_date,
+  store_name,
+  product_category,
+  product_name,       -- added: enables per-product analysis
+  shipping_status,
+
+  -- ── Order metrics ──────────────────────────────────────────
+  COUNT(DISTINCT order_id)                          AS total_orders,
+  SUM(quantity)                                     AS total_units_sold,
+  COUNT(DISTINCT customer_id)                       AS unique_customers,
+
+  -- ── Revenue metrics ────────────────────────────────────────
+  ROUND(SUM(revenue), 2)                            AS total_revenue,
+  -- ROUND(AVG(revenue), 2)                            AS avg_order_value,
+  -- ROUND(MIN(revenue), 2)                            AS min_order_value,
+  -- ROUND(MAX(revenue), 2)                            AS max_order_value,
+  ROUND(SUM(discount_amount), 2)                    AS total_discounts_given,
+
+  -- ── Discount rate ──────────────────────────────────────────
+  ROUND(
+    SAFE_DIVIDE(SUM(discount_amount), SUM(revenue)) * 100, 2
+  )                                                 AS discount_rate_pct,
+
+  -- ── Pre-computed time dims for dashboard/chatbot filters ───
+  EXTRACT(YEAR  FROM order_date)                    AS order_year,
+  EXTRACT(MONTH FROM order_date)                    AS order_month,
+  FORMAT_DATE('%Y-%m', order_date)                  AS order_year_month,
+  FORMAT_DATE('%A', order_date)                     AS order_day_of_week,
+
+  CURRENT_DATE()                                    AS _last_updated
+
+FROM ${ref("stg_orders_cleaned")}
+GROUP BY
+  order_date,
+  store_name,
+  product_category,
+  product_name,
+  shipping_status
+

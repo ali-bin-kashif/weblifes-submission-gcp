@@ -1,0 +1,281 @@
+-- definitions/staging/orders_cleaned.sqlx
+-- Staging model: raw_orders → orders_cleaned
+-- Full overwrite daily. Typed, deduped, normalised.
+
+config {
+  type: "table",
+  schema: "weblife_ecommerce",
+  name: "stg_orders_cleaned",
+  description: "Cleaned and normalised orders. Deduped, typed, store/product names canonicalised. Rebuilt daily from latest raw batch.",
+
+}
+
+-- Your staging SQL goes here (02_staging.sql — orders_cleaned block)
+
+WITH
+
+-- ── CTE 1: Scope to latest ingestion batch only ───────────────
+-- Cost optimisation: only scan rows from today's pipeline run
+-- Avoids full raw table scan — raw grows daily, this stays cheap
+
+latest_batch AS (
+  SELECT *
+  FROM ${ref("raw_orders")}
+  WHERE DATE(_ingested_at) = CURRENT_DATE()
+),
+
+-- ── CTE 2: Remove exact duplicate rows within batch ───────────
+-- Source system sometimes double-sends the full file
+-- DISTINCT across all columns removes perfect duplicates
+
+deduped AS (
+  SELECT DISTINCT *
+  FROM latest_batch
+),
+
+
+-- ── CTE 3: Resolve conflicting order_ids ─────────────────────
+-- Same order_id appearing with different values (retry/resend bug)
+-- Keep the most recently ingested row per order_id
+
+deduped_by_id AS (
+  SELECT *
+  FROM (
+    SELECT
+      *,
+      ROW_NUMBER() OVER (
+        PARTITION BY order_id
+        ORDER BY _ingested_at DESC
+      ) AS _rn
+    FROM deduped
+    WHERE order_id IS NOT NULL
+      AND TRIM(order_id) != ''
+  )
+  WHERE _rn = 1
+),
+
+-- ── CTE 3: Cast, normalise, clean ────────────────────────────
+
+cleaned AS (
+  SELECT
+
+    -- ── Primary key ──────────────────────────────────────────
+    TRIM(order_id)                                                AS order_id,
+
+    -- ── Dates ────────────────────────────────────────────────
+    -- order_date is system-generated ISO format YYYY-MM-DD
+    SAFE_CAST(order_date AS DATE)                                 AS order_date,
+
+    -- ── Customer fields ──────────────────────────────────────
+    TRIM(customer_id)                                             AS customer_id,
+    NULLIF(INITCAP(TRIM(customer_name)),  '')                     AS customer_name,
+    NULLIF(LOWER(TRIM(customer_email)),   '')                     AS customer_email,
+    NULLIF(INITCAP(TRIM(customer_city)),  '')                     AS customer_city,
+    NULLIF(UPPER(TRIM(customer_state)),   '')                     AS customer_state,
+
+    -- ── Product name: explicit canonical mapping ─────────────
+    -- Handles lower/upper/hyphen/plural/typo/spacing variants
+    -- Regex: collapse spaces+hyphens, lowercase, match core keyword(s)
+    CASE
+      -- Furniture
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'adirondackchair')
+        THEN 'Adirondack Chair'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'patiodiningtabl')
+        THEN 'Patio Dining Table'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'gardenbench')
+        THEN 'Garden Bench'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'sunloung')
+        THEN 'Sun Lounger'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'hammok|hammock')
+        THEN 'Hammock'
+      -- Garden Tools
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'leafblow')
+        THEN 'Leaf Blower'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'gardenhose')
+        THEN 'Garden Hose'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'pruning|prunning')
+        THEN 'Pruning Shears'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'wheelbarrow|wheelbar')
+        THEN 'Wheelbarrow'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'trowl|trowelset')
+        THEN 'Trowel Set'
+      -- BBQ & Grilling
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'gasgril')
+        THEN 'Gas Grill'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'charcoalgril|charcolgril')
+        THEN 'Charcoal Grill'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'bbqtool|bbqtoolset')
+        THEN 'BBQ Tool Set'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'grillcov')
+        THEN 'Grill Cover'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'firepit')
+        THEN 'Fire Pit'
+      -- Lighting
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'solarlantr|solarlantern')
+        THEN 'Solar Lantern'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'stringlight')
+        THEN 'String Lights'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'pathlight|pathwaylight')
+        THEN 'Pathway Light'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'decklight')
+        THEN 'Deck Light'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'floodlight')
+        THEN 'Flood Light'
+      -- Outdoor Decor
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'windchime')
+        THEN 'Wind Chime'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'birdbath')
+        THEN 'Bird Bath'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'gardenstateu|gardenstatue')
+        THEN 'Garden Statue'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'plntpot|plantpot')
+        THEN 'Plant Pot'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(REGEXP_REPLACE(product_name,r'[\s\-]+',''))),r'wallplantr|wallplanter')
+        THEN 'Wall Planter'
+      -- Fallback: clean up whatever came in
+      ELSE INITCAP(TRIM(REGEXP_REPLACE(product_name, r'\s+', ' ')))
+    END                                                           AS product_name,
+
+    -- ── Product category: normalise to 5 canonical values ────
+    CASE
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(product_category)), r'furniture')
+        THEN 'Furniture'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(product_category)), r'garden.?tool')
+        THEN 'Garden Tools'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(product_category)), r'bbq|grill')
+        THEN 'BBQ & Grilling'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(product_category)), r'light')
+        THEN 'Lighting'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(product_category)), r'decor|outdoor.?decor')
+        THEN 'Outdoor Decor'
+      ELSE INITCAP(TRIM(product_category))
+    END                                                           AS product_category,
+
+    -- ── Store name: explicit canonical mapping ────────────────
+    -- Handles casing, spacing, punctuation variants
+    CASE
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(store_name)), r'outdoor[\s\-]*hub')
+        THEN 'OutdoorHub'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(store_name)), r'home[\s\-]*nest')
+        THEN 'HomeNest'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(store_name)), r'garden[\s\-\+]*plus')
+        THEN 'GardenPlus'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(store_name)), r'nature[\s\-]*goods')
+        THEN 'NatureGoods'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(store_name)), r'patio[\s\-_!]*world')
+        THEN 'PatioWorld'
+      ELSE INITCAP(TRIM(store_name))
+    END                                                           AS store_name,
+
+    -- ── Numeric fields ───────────────────────────────────────
+    -- ABS on quantity: Assuming negatives are data-entry errors, not returns
+    ABS(SAFE_CAST(quantity AS INT64))                             AS quantity,
+    SAFE_CAST(unit_price AS NUMERIC)                              AS unit_price,
+    IFNULL(SAFE_CAST(discount_amount AS NUMERIC), 0)              AS discount_amount,
+
+    -- ── Revenue: validate then correct ───────────────────────
+    -- Expected = (qty × unit_price) - discount
+    -- If raw revenue within $0.02 tolerance → keep it
+    -- If mismatched → recompute from components (source calc bug)
+    CASE
+      WHEN ABS(
+            SAFE_CAST(revenue AS NUMERIC)
+            - (
+                ABS(SAFE_CAST(quantity AS INT64)) * SAFE_CAST(unit_price AS NUMERIC)
+                - IFNULL(SAFE_CAST(discount_amount AS NUMERIC), 0)
+              )
+           ) <= 0.02
+        THEN ROUND(SAFE_CAST(revenue AS NUMERIC), 2)
+      ELSE
+        ROUND(
+          ABS(SAFE_CAST(quantity AS INT64)) * SAFE_CAST(unit_price AS NUMERIC)
+          - IFNULL(SAFE_CAST(discount_amount AS NUMERIC), 0),
+          2
+        )
+    END                                                           AS revenue,
+
+    -- Audit flag: TRUE if revenue was recomputed
+    ABS(
+      SAFE_CAST(revenue AS NUMERIC)
+      - (
+          ABS(SAFE_CAST(quantity AS INT64)) * SAFE_CAST(unit_price AS NUMERIC)
+          - IFNULL(SAFE_CAST(discount_amount AS NUMERIC), 0)
+        )
+    ) > 0.02                                                      AS _revenue_was_corrected,
+
+    -- ── Shipping & payment ───────────────────────────────────
+    NULLIF(INITCAP(TRIM(shipping_method)), '')                    AS shipping_method,
+
+    -- Normalise shipping_status → 5 canonical values
+    CASE
+      WHEN LOWER(TRIM(shipping_status)) IN ('shipped','dispatched','in transit')
+        THEN 'Shipped'
+      WHEN LOWER(TRIM(shipping_status)) IN ('processing','pending','in progress')
+        THEN 'Processing'
+      WHEN LOWER(TRIM(shipping_status)) IN ('delivered','complete','completed')
+        THEN 'Delivered'
+      WHEN LOWER(TRIM(shipping_status)) IN ('returned','refunded','refund')
+        THEN 'Returned'
+      WHEN LOWER(TRIM(shipping_status)) IN ('cancelled','canceled')
+        THEN 'Cancelled'
+      ELSE INITCAP(TRIM(shipping_status))
+    END                                                           AS shipping_status,
+
+    NULLIF(INITCAP(TRIM(payment_method)), '')                     AS payment_method,
+
+    -- ── Pipeline metadata passthrough ────────────────────────
+    _ingested_at,
+    _source_filename,
+    _pipeline_run_date,
+    _email_received_date
+
+  FROM deduped_by_id
+),
+
+-- ── CTE 4: Filter — only valid rows into orders_cleaned ──────
+-- Rows failing any check here go to orders_rejected (Step 2)
+
+valid_rows AS (
+  SELECT *
+  FROM cleaned
+  WHERE
+    order_date     IS NOT NULL                -- no missing dates
+    AND order_date <= CURRENT_DATE()          -- no future dates
+    AND quantity    > 0                       -- no zero/negative qty
+    AND unit_price  > 0                       -- no zero price
+    AND revenue     > 0                       -- no zero/negative revenue
+                                              -- NOTE: no upper cap — high-value
+                                              -- orders (e.g. 8x Gas Grills ≈ $3,992)
+                                              -- are legitimate
+    AND customer_state IN (
+      'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID',
+      'IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS',
+      'MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK',
+      'OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'
+    )
+)
+
+SELECT
+  order_id,
+  order_date,
+  customer_id,
+  customer_name,
+  customer_email,
+  customer_city,
+  customer_state,
+  store_name,
+  product_name,
+  product_category,
+  quantity,
+  unit_price,
+  discount_amount,
+  revenue,
+  _revenue_was_corrected,
+  shipping_method,
+  shipping_status,
+  payment_method,
+  _ingested_at,
+  _source_filename,
+  _pipeline_run_date,
+  _email_received_date
+FROM valid_rows

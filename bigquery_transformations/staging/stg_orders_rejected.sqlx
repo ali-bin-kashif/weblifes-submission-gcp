@@ -1,0 +1,99 @@
+-- definitions/staging/orders_cleaned.sqlx
+-- Staging model: raw_orders → orders_cleaned
+-- Full overwrite daily. Typed, deduped, normalised.
+
+config {
+  type: "table",
+  schema: "weblife_ecommerce",
+  name: "stg_orders_rejected",
+  description: "Rows rejected from orders_cleaned due to critical DQ failures. Includes pipe-delimited rejection_reason column. Rebuilt daily from latest raw batch.",
+
+}
+
+
+-- ════════════════════════════════════════════════════════════
+-- STEP 2: orders_rejected
+-- Quarantine table — rows failing any critical DQ check
+-- Full overwrite daily (mirrors staging)
+-- ════════════════════════════════════════════════════════════
+
+WITH source AS (
+  -- Cost optimisation: only today's batch, same as orders_cleaned
+  SELECT DISTINCT *
+  FROM ${ref("raw_orders")}
+  WHERE DATE(_ingested_at) = CURRENT_DATE()
+)
+
+SELECT
+  order_id,
+  order_date,
+  customer_id,
+  customer_name,
+  customer_email,
+  customer_city,
+  customer_state,
+  product_name,
+  product_category,
+  store_name,
+  quantity,
+  unit_price,
+  discount_amount,
+  revenue,
+  shipping_method,
+  shipping_status,
+  payment_method,
+  _ingested_at,
+  _source_filename,
+
+  -- Pipe-delimited rejection reasons — one row can have multiple
+  TRIM(CONCAT(
+    CASE WHEN order_id IS NULL OR TRIM(order_id) = ''
+      THEN '| Missing order_id '                                         ELSE '' END,
+    CASE WHEN order_date IS NULL OR TRIM(order_date) = ''
+      THEN '| Missing order_date '                                       ELSE '' END,
+    CASE WHEN SAFE_CAST(order_date AS DATE) > CURRENT_DATE()
+      THEN '| Future order_date (' || order_date || ') '                ELSE '' END,
+    CASE WHEN SAFE_CAST(quantity AS INT64) IS NULL
+          OR SAFE_CAST(quantity AS INT64) <= 0
+      THEN '| Invalid quantity (' || IFNULL(quantity,'NULL') || ') '    ELSE '' END,
+    CASE WHEN SAFE_CAST(unit_price AS NUMERIC) IS NULL
+          OR SAFE_CAST(unit_price AS NUMERIC) <= 0
+      THEN '| Invalid unit_price (' || IFNULL(unit_price,'NULL') || ') ' ELSE '' END,
+    CASE WHEN revenue IS NULL OR TRIM(revenue) = ''
+      THEN '| Missing revenue '                                          ELSE '' END,
+    CASE WHEN SAFE_CAST(revenue AS NUMERIC) <= 0
+      THEN '| Non-positive revenue (' || revenue || ') '                ELSE '' END,
+    CASE WHEN customer_state IS NULL OR TRIM(customer_state) = ''
+      THEN '| Missing customer_state '                                   ELSE '' END,
+    CASE
+      WHEN customer_state IS NOT NULL
+        AND TRIM(customer_state) != ''
+        AND UPPER(TRIM(customer_state)) NOT IN (
+          'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID',
+          'IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS',
+          'MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK',
+          'OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'
+        )
+      THEN '| Invalid state (' || customer_state || ') '
+      ELSE ''
+    END
+  ), '| ')                                                               AS rejection_reason,
+
+  CURRENT_TIMESTAMP()                                                    AS _rejected_at
+
+FROM source
+WHERE
+  (order_id IS NULL OR TRIM(order_id) = '')
+  OR (order_date IS NULL OR TRIM(order_date) = '')
+  OR (SAFE_CAST(order_date AS DATE) > CURRENT_DATE())
+  OR (SAFE_CAST(quantity AS INT64) IS NULL OR SAFE_CAST(quantity AS INT64) <= 0)
+  OR (SAFE_CAST(unit_price AS NUMERIC) IS NULL OR SAFE_CAST(unit_price AS NUMERIC) <= 0)
+  OR (revenue IS NULL OR TRIM(revenue) = '')
+  OR (SAFE_CAST(revenue AS NUMERIC) <= 0)
+  OR (customer_state IS NULL OR TRIM(customer_state) = '')
+  OR (UPPER(TRIM(customer_state)) NOT IN (
+      'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID',
+      'IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS',
+      'MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK',
+      'OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'
+    ))

@@ -18,3 +18,7 @@ python-dotenv>=1.0.0
 
 # Cloud Functions (deploy only)
 functions-framework>=3.0.0
+
+# Chainlit Conversational UI / AI
+chainlit>=2.0.0
+anthropic>=0.25.0
