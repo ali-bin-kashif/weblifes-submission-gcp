@@ -1,8 +1,28 @@
+
+
+tabulate>=0.9.0  # required by DataFrame.to_markdown()
+
 chainlit>=2.0.0
 anthropic>=0.25.0
+
+
+# Google
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
+google-api-python-client>=2.0.0
+
+# BigQuery
 google-cloud-bigquery>=3.0.0
-google-cloud-bigquery-storage>=2.0.0  # speeds up to_dataframe()
+google-cloud-bigquery-storage>=2.0.0
+db-dtypes>=1.0.0
 pyarrow>=14.0.0
+
+# Data
 pandas>=2.0.0
-tabulate>=0.9.0  # required by DataFrame.to_markdown()
+
+# Config
 python-dotenv>=1.0.0
+
+# Cloud Functions (deploy only)
+functions-framework>=3.0.0
