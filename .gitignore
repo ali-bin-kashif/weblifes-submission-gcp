@@ -216,7 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-.chainlit
+# .chainlit
 
 # Auth and Secrets
 auth/
