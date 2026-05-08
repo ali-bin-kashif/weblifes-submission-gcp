@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| **Video Walkthrough (Loom)** | _[Insert Loom link here]_ |
+| **Video Walkthrough (Loom)** | https://www.loom.com/share/9ba261dfccd1465b837893f1fc4ee1f7 |
 | **Data Quality Dashboard** | _https://datastudio.google.com/reporting/701860c2-5e1e-4468-8371-6b6ca5150874_ |
 | **Live Chatbot** | _https://weblifes-submission-gcp.onrender.com_ |
 
@@ -53,6 +53,45 @@ Non-technical users have no way to get answers on their own.
 | No error handling or alerting | 5-scenario Gmail alert system covering failures, duplicates, missing files, and daily quality reports |
 | Dirty data reaching dashboards | 14 DQ checks across 3 severity levels; quarantine table for rejected rows; staging layer with dedup, type-casting, and canonicalisation |
 | No self-serve analytics | Plain-English AI chatbot backed by Claude + BigQuery — anyone can ask questions and get answers instantly |
+
+<br>
+
+---
+<br>
+
+## Assumptions
+
+- The source system sends one email per day with a single CSV attachment named `e_com_sales_YYYYMMDD.csv`
+- The email subject follows the format `[E-Com] Daily Sales Export – YYYY-MM-DD` exactly
+- I've generated the datasets with the help of Claude mimicing real world mess.
+
+<br>
+
+---
+<br>
+
+## Approach
+
+### Deliverable Order
+
+Built in dependency order: ingestion first (nothing else works without data), transformations second (the chatbot needs clean data), chatbot last.
+
+### Test Data
+
+Realistic sales data was generated using **Claude Code** — 5 stores, 20 products across 5 categories, ~3 years of daily orders with intentional noise (typos in store names, casing variants, occasional duplicate rows, missing fields, revenue mismatches). This let every layer of the pipeline be tested against data that behaved like real source system output, not a clean synthetic fixture.
+
+### Development with Claude Code
+
+The entire project was built using **[Claude Code](https://claude.ai/code)** as an AI coding assistant throughout the development process.
+
+Claude Code significantly accelerated the workflow:
+
+- **Boilerplate elimination** — scaffolding for Cloud Functions, Dataform models, Chainlit handlers, and Dockerfiles was generated and immediately functional rather than written from scratch
+- **Error diagnosis** — runtime errors (credential resolution, Chainlit 2.x API changes, PyArrow type mapping) were diagnosed and fixed in context without losing momentum
+- **Pattern consistency** — the same conventions (logging, error handling, env var loading, alert structure) were applied uniformly across all files without manual cross-referencing
+- **Documentation** — docstrings, inline comments, and this README were written alongside the code rather than as a separate pass at the end
+
+All generated code was reviewed, understood, and tested before being committed. Claude Code made the process faster and more consistent — it did not replace the engineering judgment behind the architecture and design decisions.
 
 <br>
 
