@@ -227,7 +227,7 @@ No type coercion at the landing layer.
 All 17 source columns land as `STRING`.
 Types are applied in staging, where the business logic lives.
 
-**Idempotency**
+**Idempotency** (Very Important)
 
 Before parsing the CSV, the pipeline queries `_source_filename` in BigQuery.
 If the file is already present it skips and alerts.
@@ -693,7 +693,11 @@ Alerting is disabled when `ALERT_RECIPIENT_EMAIL` is unset. Alert failures are n
 
 The quality report email includes: row count, duplicate `order_id` count, full duplicate row count, and per-column empty-value counts with percentages.
 
-> ![Alert Email Screenshot](docs/images/alert_email.png)
+> ![Alert Email Screenshot](document_assets\alert1.png)
+>
+> ![Alert Email Screenshot](document_assets\alert2.png)
+>
+> ![Alert Email Screenshot](document_assets\alert3.png)
 
 ---
 
