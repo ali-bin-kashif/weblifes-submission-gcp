@@ -359,9 +359,9 @@ Users ask questions in plain English. The agent writes BigQuery SQL, executes it
 
 > **Chatbot Screenshot**
 >
-> ![Chatbot UI 1](document_assets\chatbot1.png)
+> ![Chatbot UI 1](document_assets/chatbot1.png)
 >
-> ![Chatbot UI 2](document_assets\chatbot2.png)
+> ![Chatbot UI 2](document_assets/chatbot2.png)
 
 ### Features
 
@@ -695,11 +695,11 @@ Alerting is disabled when `ALERT_RECIPIENT_EMAIL` is unset. Alert failures are n
 
 The quality report email includes: row count, duplicate `order_id` count, full duplicate row count, and per-column empty-value counts with percentages.
 
-> ![Alert Email Screenshot](document_assets\alert1.png)
+> ![Alert Email Screenshot](document_assets/alert1.png)
 >
-> ![Alert Email Screenshot](document_assets\alert2.png)
+> ![Alert Email Screenshot](document_assets/alert2.png)
 >
-> ![Alert Email Screenshot](document_assets\alert3.png)
+> ![Alert Email Screenshot](document_assets/alert3.png)
 
 ---
 
